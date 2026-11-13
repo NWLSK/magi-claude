@@ -1,4 +1,4 @@
-.PHONY: test lint format typecheck lockcheck verify release-check
+.PHONY: test lint format typecheck lockcheck verify release-check skill-zip
 
 # uv is a hard prerequisite for developing (not for using) the plugin. Say so here rather
 # than letting the first target die with a bare "uv: command not found".
@@ -37,3 +37,12 @@ verify: lockcheck test lint format typecheck
 # checks the artifact that a separate, deliberate `measure` invocation already produced.
 release-check:
 	uv run python tools/measure_marker_adherence.py check
+
+# Packages the standalone lite skill for upload to a Claude app. The archive holds one
+# folder, magi-lite/, with SKILL.md inside it. The token budget is checked first, so an
+# archive that breaks the skill's 2x promise is never produced.
+skill-zip:
+	uv run python tools/measure_lite_overhead.py
+	mkdir -p dist
+	rm -f dist/magi-lite.zip
+	uv run python -m zipfile -c dist/magi-lite.zip standalone/magi-lite
