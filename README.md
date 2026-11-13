@@ -46,6 +46,18 @@ For trivial questions with one clear answer, the complexity gate skips the full 
 
 For the full technical reference, see [`docs/MAGI-System-Documentation.md`](docs/MAGI-System-Documentation.md).
 
+**New in v7.1.0: a general mode, web access, and a lightweight skill.** MAGI is no longer
+only for code. The new `general` mode takes any request (a question, a decision, a plan,
+research, writing) and seats the three mages as the original MAGI characters: Melchior the
+scientist (logic, facts, evidence), Balthasar the guardian (protection, risk, ethics) and
+Caspar the human (the person's values, intuition, the unconventional angle). In that mode
+the mages can search and read the web, each returns its own full answer alongside its vote,
+and Claude writes one reply from the three after the verdict banner. `--require unanimous`
+adds a stricter threshold for actions that cannot be undone. The `code-review`, `design`
+and `analysis` modes, their prompts and their output are unchanged. For Claude apps
+without Claude Code there is also a single-file skill, [`magi-lite`](#magi-lite-skill),
+that runs the council inside one reply.
+
 **New in v7.0.0: `magi-rs` 0.24.1, and `.magi/` has to be regenerated (BREAKING).** The
 pinned `magi-rs` moves from 0.21.0 to 0.24.1. Since `magi-rs` 0.23.0 a `.magi/magi.toml`
 without a `[decision]` section no longer loads, so every `--ollama` run against a project
@@ -149,6 +161,15 @@ Stated plainly, because a guarantee you misunderstand is worse than one you don'
 | **Balthasar** | Pragmatist | Practicality and maintainability | Grounded, trade-off oriented, advocates for the team |
 | **Caspar** | Critic | Risk, edge cases, and failure modes | Adversarial by design, finds what others miss |
 
+Those are the seats in the three code modes. In `general` mode the same three names take
+the characters of the original MAGI, each with its own prompt in `skills/magi/agents/general/`:
+
+| Agent | Codename | Lens | Personality |
+|-------|----------|------|-------------|
+| **Melchior** | Scientist | Logic, facts and evidence | What is true, how we know, how sure we can be |
+| **Balthasar** | Guardian | Protection, risk and ethics | What could go wrong, who bears it, whether it can be undone |
+| **Caspar** | Human | The person's values, intuition, the unconventional angle | The wildcard: argues for what the tidy answer leaves out |
+
 ---
 
 ## Installation
@@ -196,15 +217,27 @@ Invoke with `/magi` or natural trigger phrases:
 MAGI review this code
 Give me three perspectives on this design
 MAGI analysis of this problem
+Ask the MAGI: should I take the job offer in Lisbon?
 ```
 
 ### Modes
 
 | Mode | When to Use | Example |
 |------|-------------|---------|
+| `general` | Anything that is not about software: questions, decisions, plans, research, writing. Web access on by default | "Ask the MAGI whether I should lease or buy the car" |
 | `code-review` | Reviewing code or diffs | "MAGI review this PR" |
 | `design` | Evaluating architecture decisions | "MAGI analyze this migration plan" |
-| `analysis` | General problem analysis, trade-offs | "MAGI should we use Redis or Postgres for this?" |
+| `analysis` | Technical problem analysis, trade-offs | "MAGI should we use Redis or Postgres for this?" |
+
+In `general` mode the reply is the verdict banner and its sections, followed by
+`## Answer`: one reply written by Claude from the three mages' answers, with their
+sources and with any dissent stated. Each mage's own full answer is in the script output
+under `## Council Answers` and in `magi-report.json`.
+
+**Web access and untrusted input.** A mage with web access is given WebSearch and WebFetch
+and no other tool: it cannot read files or run commands. Web is off by default in the code
+modes because a diff written by someone else can contain text that tries to steer a mage
+into fetching things; turn it on there with `--web` only for input you trust.
 
 ### CLI (Direct Execution)
 
@@ -216,10 +249,46 @@ python skills/magi/scripts/run_magi.py <mode> <file_or_text> [--model opus] [--t
 |------|---------|-------------|
 | `--model` | `opus` | LLM model for all agents (`opus`, `sonnet`, `haiku`) — Claude backend |
 | `--ollama` | off | Run the open-weight trio through **`magi-rs`** (one model per mage, from `.magi/magi.toml`) instead of `claude -p`. Mutually exclusive with `--model`. See [`docs/ollama-backend.md`](docs/ollama-backend.md) |
+| `--web` / `--no-web` | on in `general`, off elsewhere | Give the mages web search and page reading (and no other tool). Claude path only |
+| `--require` | `majority` | `unanimous` holds anything short of three plain approves as `HOLD -- VETO`; for actions that cannot be undone |
 | `--ollama-init` | — | Initialise the project for `magi-rs` (`magi-rs init -w <cwd>`, creates `.magi/`) and exit |
 | `--timeout` | `900` / `16820` | Per-agent timeout in seconds (`900` on the Claude path; `16820` with `--ollama`, where it also sets each mage's per-attempt budget) |
 | `--output-dir` | auto | Directory for agent outputs (default: temp dir) |
 | `-o`, `--out` | — | Redirect the human-readable verdict report to a file (suppressing it on stdout); on a write failure it warns and falls back to stdout so the verdict is never lost |
+
+With `--ollama`, `general` runs as `analysis` with the original prompts and no web access
+(the open-weight executor knows only the three original modes); the run says so on stderr
+and records `requested_mode` in the report.
+
+---
+
+## magi-lite skill
+
+The plugin launches three separate model calls, which is the point of it and also its
+cost. [`standalone/magi-lite/SKILL.md`](standalone/magi-lite/SKILL.md) is a separate,
+single-file skill for when that is too much, and for Claude apps that cannot run the
+plugin's scripts. Claude takes the three positions inside one reply, shows them in a
+short council block (120 words at most) and then answers normally. No sub-agents, no
+scripts, no extra model calls.
+
+Its cost is fixed: about 510 tokens for the skill file plus about 180 for the council
+block. A reply therefore stays within twice the cost of a plain one whenever the plain
+exchange would be about 690 tokens or more, roughly a 450-word answer; smaller requests
+are the ones the skill's own gate answers without the council. Check the numbers with:
+
+```bash
+python tools/measure_lite_overhead.py
+```
+
+To install it, build the archive and upload it as a skill in the Claude app's settings,
+or copy the folder into `~/.claude/skills/` for Claude Code:
+
+```bash
+make skill-zip   # writes dist/magi-lite.zip
+```
+
+The three positions come from one model in one pass, so they are less independent than
+the plugin's three separate runs. Use the plugin when the decision matters.
 
 ---
 
@@ -366,6 +435,9 @@ skills/magi/
     melchior.md               -- Scientist system prompt
     balthasar.md              -- Pragmatist system prompt
     caspar.md                 -- Critic system prompt (adversarial by design)
+    general/                  -- General-mode prompts: Scientist, Guardian, Human
+  references/
+    output-format.md          -- Report format rules, native and fallback paths
   scripts/
     __init__.py               -- Python package marker
     run_magi.py               -- Async orchestrator with --model flag
@@ -380,6 +452,11 @@ tests/
   test_parse_agent_output.py  -- transport envelopes, the delimited block, fail-closed paths
   test_prompt_guard.py        -- the installation-time guard and its dry run
   test_run_magi.py            -- args, orchestration, retry feedback, telemetry
+  test_general_mode.py        -- general mode, web tools, unanimity, the lite skill
+standalone/
+  magi-lite/SKILL.md          -- Single-file lightweight skill (not loaded by the plugin)
+tools/
+  measure_lite_overhead.py    -- Token budget check for magi-lite
 docs/
   MAGI-System-Documentation.md  -- Full technical reference (Spanish)
 pyproject.toml                -- Python >= 3.12, dual license, dev deps, tool config

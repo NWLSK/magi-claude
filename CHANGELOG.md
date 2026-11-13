@@ -9,6 +9,55 @@ Install and update through the marketplace: `/plugin marketplace add BolivarTech
 `/plugin install magi@bolivartech-plugins`, then `/plugin marketplace update` to pick up a new
 release.
 
+## [7.1.0] - 2026-11-13
+
+### Added
+
+- `general` mode: MAGI now takes any request, not only software ones. A question, a
+  decision, a plan, research or a piece of writing goes to three mages seated as the original
+  MAGI characters: Melchior the scientist (logic, facts, evidence), Balthasar the guardian
+  (protection, risk, ethics) and Caspar the human (the person's values, intuition, the
+  unconventional angle). Their prompts are new files under `skills/magi/agents/general/`.
+- Web access for the mages. In `general` mode each mage can search the web and read pages,
+  and cites the URLs it relied on. It is given WebSearch and WebFetch and no other tool.
+  `--no-web` turns it off; `--web` turns it on in another mode. The saved report records the
+  setting in a new top-level `web` key, and the mode in `mode`.
+- An optional `answer` field in a mage's verdict: its own full reply to the request. In
+  `general` mode the printed report ends with `## Council Answers`, and the skill has Claude
+  write one `## Answer` from the three after the verdict banner, keeping sources and stating
+  any dissent. A malformed `answer` is dropped without costing the mage its seat.
+- `--require unanimous`, for actions that cannot be undone. All three seats must be filled and
+  vote a plain `approve`; otherwise the consensus is `HOLD -- VETO (N-M)`, or
+  `HOLD -- VETO (2 of 3 seated)` when a seat failed. The default, `--require majority`, is the
+  vote as it was. `synthesize.py` accepts `--require` and `--mode` too.
+- `standalone/magi-lite/`: a single-file skill that runs the council inside one reply, with no
+  sub-agents and no scripts, for Claude apps that cannot run the plugin. Its fixed cost is about
+  690 tokens, so a reply stays within twice a plain one whenever the plain exchange is that
+  size or larger. `tools/measure_lite_overhead.py` checks the budget and `make skill-zip`
+  packages it. It lives outside `skills/`, so the plugin does not load it.
+
+### Changed
+
+- `skills/magi/SKILL.md` is 7 KB, down from 17 KB, and so costs far less to load on each
+  invocation. The format rules and the native and fallback walkthroughs moved to
+  `skills/magi/references/output-format.md`, which is read only on those paths. The canonical
+  output template stays in `SKILL.md`.
+- `--check-prompts` validates both prompt sets.
+- With `--ollama`, a `general` request runs as `analysis` with the original prompts and no web
+  access, because `magi-rs` knows only the three original modes. The run says so on stderr
+  and the report carries `requested_mode`. `--web` with `--ollama` warns and has no effect.
+
+### Unchanged
+
+- `code-review`, `design` and `analysis`: same prompts, same launch arguments, same output.
+  A report from those modes gains the `mode` and `web` keys and nothing else.
+
+### Not measured
+
+- The marker-adherence measurement behind `make release-check` has not been run for the three
+  general-mode prompts. It needs real, paid runs. The prompts reuse the marker contract of the
+  existing ones and pass the same contract tests and the startup guard.
+
 ## [7.0.1] - 2026-10-14
 
 ### Fixed

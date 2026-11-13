@@ -1,7 +1,7 @@
 {
   "name": "magi",
-  "version": "7.0.1",
-  "description": "Multi-perspective analysis system inspired by Evangelion's MAGI supercomputers. Spawns three sub-agents (Melchior, Balthasar, Caspar) that evaluate code, designs, and decisions from complementary perspectives, then synthesize verdicts via majority vote.",
+  "version": "7.1.0",
+  "description": "Three-mind council inspired by Evangelion's MAGI supercomputers. Three independent agents (Melchior, Balthasar, Caspar) answer any request from different angles (questions, decisions, plans, research with web search, code review, software design), vote, and keep the dissent.",
   "author": {
     "name": "Julian Bolivar",
     "url": "https://github.com/BolivarTech"
@@ -9,10 +9,12 @@
   "repository": "https://github.com/BolivarTech/magi-claude",
   "license": "MIT OR Apache-2.0",
   "keywords": [
-    "code-review",
     "multi-perspective",
-    "analysis",
     "decision-making",
+    "analysis",
+    "research",
+    "second-opinion",
+    "code-review",
     "evangelion",
     "magi"
   ],

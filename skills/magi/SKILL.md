@@ -1,227 +1,87 @@
 ---
 name: magi
 description: >
-  Multi-perspective analysis system inspired by the MAGI supercomputers from Evangelion.
-  Spawns three sub-agents (Melchior, Balthasar, Caspar) that evaluate the same problem
-  from different angles and reach a consensus by majority vote. Use this skill for
-  decisions with genuine uncertainty, significant consequences, or real trade-offs.
-  Trigger phrases: "MAGI", "three perspectives", "multi-perspective analysis",
-  "MAGI review", or explicit requests for multi-angle evaluation.
-  NOT suitable for trivial questions, simple bugs, or decisions with obvious answers.
+  Three-mind council inspired by the MAGI supercomputers from Evangelion. Three
+  independent agents (Melchior, Balthasar, Caspar) answer the same request from different
+  angles, vote, and the dissent is kept. Works for any request: questions, decisions,
+  plans, research (with web search), writing, and also code review and software design.
+  Use it for requests with genuine uncertainty, real trade-offs or significant
+  consequences. Trigger phrases: "MAGI", "ask the MAGI", "three perspectives",
+  "multi-perspective analysis", "MAGI review". NOT for trivial questions or anything
+  with one obvious answer.
 ---
 
-# MAGI System — Multi-Perspective Analysis Skill
+# MAGI System
 
-## Overview
+Three agents answer independently, then a deterministic vote produces the consensus.
 
-The MAGI system uses three specialized sub-agents to analyze problems from
-complementary perspectives, then synthesizes their verdicts into a final
-consensus. Each agent has a distinct analytical lens:
+| Agent | Code modes | General mode |
+|-------|------------|--------------|
+| **Melchior** | Scientist: technical rigor, correctness | Scientist: logic, facts, evidence |
+| **Balthasar** | Pragmatist: practicality, maintainability | Guardian: protection, risk, ethics |
+| **Caspar** | Critic: risk, edge cases, failure modes | Human: the person's values, intuition, the unconventional angle |
 
-| Agent        | Codename   | Lens                        |
-|------------- |----------- |-----------------------------|
-| **Melchior** | Scientist  | Technical rigor & correctness |
-| **Balthasar**| Pragmatist | Practicality & maintainability |
-| **Caspar**   | Critic     | Risk, edge cases & failure modes |
+## Step 1: Gate, then pick the mode
 
-## Workflow
+**Gate.** If the request is simple (one clear answer, an obvious fix, a quick lookup),
+answer it directly and do not launch MAGI.
 
-### Step 1: Evaluate complexity and detect mode
+**Mode:**
 
-**Complexity gate:** Before launching three sub-agents, assess whether the request
-warrants multi-perspective analysis. If the request is simple (single function review,
-obvious bug fix, straightforward question with one clear answer), respond directly
-without invoking the full MAGI system. MAGI adds value when there is genuine
-uncertainty, multiple valid approaches, or significant consequences for a wrong decision.
+- **`general`** — anything that is not about software: a question, a decision, a plan,
+  research, advice, a piece of writing. The mages can search and read the web.
+- **`code-review`** — the user provides code or a diff to evaluate.
+- **`design`** — software architecture, approach selection, solution design.
+- **`analysis`** — a technical problem, debugging, engineering trade-offs.
 
-If the request warrants MAGI, classify into one of three modes:
+If it is not about software, use `general`. If it is and none of the three fits, use
+`analysis`.
 
-- **`code-review`** — The user provides code or a diff to evaluate.
-- **`design`** — The user asks about architecture, approach selection, or solution design.
-- **`analysis`** — General problem analysis, debugging, trade-offs, or decisions.
+## Step 2: Run the orchestrator
 
-If ambiguous, default to `analysis`.
+    python skills/magi/scripts/run_magi.py <mode> <input_file_or_text> [options]
 
-### Step 2: Prepare the prompt payload
+Pass a file path, or the request as quoted text. In `general` mode pass the user's
+request in full, with any context they gave that the mages need; they see nothing else
+from this conversation.
 
-Construct a single `PROMPT_PAYLOAD` variable containing:
+| Option | Use |
+|--------|-----|
+| `--model opus\|sonnet\|haiku` | Default `opus`. Change only if the user asks ("use sonnet"). An unsupported model: say which are valid and use `opus`. |
+| `--web` / `--no-web` | Web search and page reading for the mages. On by default in `general`, off elsewhere. Pass `--web` in another mode only if the user asks for it; pass `--no-web` if they ask for no internet. |
+| `--require unanimous` | For actions the user describes as irreversible or high-stakes (deleting data, a production migration, a large financial or legal commitment), or when they ask for unanimity. Anything short of three plain approves becomes `HOLD -- VETO`. |
+| `--timeout <s>` | Per-agent timeout, default 900. |
+| `--output-dir <dir>` | Where the per-agent files and `magi-report.json` go. |
 
-```
-MODE: <code-review | design | analysis>
-CONTEXT: <user's full question, code, or description>
-```
+The script launches the three agents in parallel, validates their output, votes and
+prints the report. A run takes a few minutes; in `general` mode with web access, launch
+it in the background and wait for completion if it may pass the Bash tool's time limit.
 
-If the user provided files, include their contents (or relevant excerpts) in the CONTEXT block.
+**Open-weight path (`--ollama`, only if the user asks for Ollama).** Runs three
+open-weight models through the pinned `magi-rs` binary using the trio in the project's
+`.magi/magi.toml`. It cannot be combined with `--model`, has no web access, and runs
+`general` requests as `analysis`. Always launch it in the background. Before first use,
+or if it fails, read [`docs/ollama-backend.md`](../../docs/ollama-backend.md); do not
+edit or delete `.magi/` on your own.
 
-### Step 3: Launch the three agents
+**If Bash is unavailable**, use native sub-agents: launch three in parallel with the
+Agent tool, each given the system prompt from `agents/<name>.md` (code modes) or
+`agents/general/<name>.md` (general mode) and the same payload:
 
-**Model selection:** The default model for all agents is the **opus** short name.
-The Anthropic model ID it resolves to (e.g. `claude-opus-5`) is owned by
-`skills/magi/scripts/models.py`, so future model bumps are a one-line edit in that
-registry — never hardcode the resolved ID here. If the user explicitly requests
-a different model in their prompt (e.g., "usa sonnet", "with haiku",
-"use sonnet model"), use that short name instead.
+    MODE: <mode>
+    CONTEXT: <the full request>
 
-Valid short names: `opus`, `sonnet`, `haiku`. If the user requests an unsupported
-model (e.g., "use gpt-4"), inform them of the valid options and default to `opus`.
+Then extract each verdict and run
+`python skills/magi/scripts/synthesize.py <a.json> <b.json> <c.json> --mode <mode>`.
+**If no sub-agents are available either**, use fallback mode. Both paths are specified in
+[`references/output-format.md`](references/output-format.md); read it before using them.
 
-**Parallel mode (preferred):** Use the Bash tool to execute the Python orchestrator.
-The orchestrator launches all three agents in parallel, applies timeouts, validates
-outputs, and runs synthesis automatically:
+## Step 3: Present the result
 
-    python skills/magi/scripts/run_magi.py <mode> <input_file_or_text> [--model opus] [--timeout 900] [--output-dir <dir>]
-
-Pass `--model sonnet` or `--model haiku` to override the default.
-
-**Open-weight path (opt-in, parallel mode only):** If the user requests Ollama
-(e.g. `/magi --ollama`, "use ollama", "con ollama"), pass `--ollama`. The three magi
-then run through **`magi-rs`**, a pinned, digest-verified binary the plugin downloads
-into its `bin/` and verifies on every run, against the Ollama endpoint and the trio
-declared in the project's `.magi/magi.toml`, one model per mage:
-
-    python skills/magi/scripts/run_magi.py <mode> <input_file_or_text> --ollama [--timeout 16820]
-
-- `--ollama` is **mutually exclusive** with `--model`: the trio comes from
-  `.magi/magi.toml`, not the CLI, and passing both errors out.
-- Run `python skills/magi/scripts/run_magi.py --ollama-init` once per project, from
-  the project root: it calls `magi-rs init` and nothing else. A gate run from a project
-  without `.magi/magi.toml` fails and names that command; it never initialises on its own.
-- `.claude/magi-ollama.toml` is no longer read (6.0.0); everything it declared lives in
-  `.magi/magi.toml`, which `magi-rs` owns.
-- If the run fails with `has no [decision] section`, the project's `.magi/` was created by
-  plugin 6.x. Do not edit or delete it on your own; tell the user it must be regenerated
-  (`mv .magi .magi.bak-0.21`, then `--ollama-init`, then copy their trio and fallbacks into
-  the new `magi.toml`) and point them to section 2 of
-  [`docs/ollama-backend.md`](../../docs/ollama-backend.md).
-- `--timeout` defaults to 16820 here and also sets each mage's per-attempt budget.
-- **Launch this path in the background** (the Bash tool's `run_in_background`) and wait for
-  its completion notification. A default run usually takes a few minutes, but it can pass
-  the Bash tool's 10-minute ceiling when a seat rotates, and segmented bundles run their
-  segments in series.
-- If a run is interrupted, look for a leftover `magi-rs` process before starting another:
-  it holds Ollama slots. On Windows, `tasklist /FI "IMAGENAME eq magi-rs.exe"`, then
-  `taskkill /PID <pid> /T /F`. On Linux and macOS, `pgrep -x magi-rs`, then `kill <pid>`.
-- A bundle above `magi-rs`'s 256 KiB input ceiling is split at section boundaries and
-  evaluated one segment at a time; the gate passes only if every segment does.
-  See [`docs/ollama-backend.md`](../../docs/ollama-backend.md).
-
-The orchestrator handles everything: agent launching, output parsing, schema validation,
-failure alerting, consensus synthesis, and report generation. No additional steps needed.
-
-If a file needs to be analyzed, pass the file path as the second argument.
-If analyzing inline text, wrap it in quotes.
-
-**Native sub-agent mode:** If Bash execution is unavailable, use the Agent tool to
-launch three sub-agents in parallel, each with its respective system prompt and the
-shared PROMPT_PAYLOAD. Pass the selected model via the Agent tool's `model` parameter
-(e.g., `"model": "opus"`).
-
-Read each agent's system prompt from the `agents/` directory:
-- `agents/melchior.md`
-- `agents/balthasar.md`
-- `agents/caspar.md`
-
-Per its system prompt (v5.1.0, the verdict sentinel), each agent wraps its verdict
-between two literal marker lines, each alone on its own line:
-
-```
-<MAGI_VERDICT>
-{ ...the agent's 7-key JSON object... }
-</MAGI_VERDICT>
-```
-
-The agent may reason or explain before the markers — ignore that part. **Before writing
-each agent's output to `<agent>.json` for Step 4's manual `synthesize.py` call, extract
-only the JSON object between `<MAGI_VERDICT>` and `</MAGI_VERDICT>` — do not write the
-marker lines themselves into the file.** `synthesize.py` reads plain JSON; it does not
-know about the markers (that extraction is normally done by `parse_agent_output.py` in
-parallel mode, which this native path bypasses). The object itself matches this schema:
-
-```json
-{
-  "agent": "melchior | balthasar | caspar",
-  "verdict": "approve | reject | conditional",
-  "confidence": 0.0-1.0,
-  "summary": "One-line verdict summary",
-  "reasoning": "Detailed analysis from this agent's perspective (2-5 paragraphs)",
-  "findings": [
-    {
-      "severity": "critical | warning | info",
-      "title": "Short title",
-      "detail": "Explanation"
-    }
-  ],
-  "recommendation": "What this agent recommends doing"
-}
-```
-
-### Step 4: Synthesize the consensus (only for native sub-agent mode)
-
-**Skip this step if you used the Python orchestrator in Step 3** — it runs synthesis
-automatically and outputs the full canonical report to stdout.
-
-If you used native sub-agent mode, run synthesis manually:
-
-    python skills/magi/scripts/synthesize.py <agent1.json> <agent2.json> [agent3.json] --output report.json
-
-**This JSON report is not the final user-facing output.** It is the structured
-input you will use in Step 5 to render the canonical banner + sections.
-Never display `report.json` to the user as the final answer — always render
-the canonical format first.
-
-The synthesis uses weight-based scoring with `approve=1, conditional=0.5, reject=-1`:
-
-| Score | Condition | Consensus |
-|-------|-----------|-----------|
-| 1.0 | unanimous approve | **STRONG GO** |
-| -1.0 | unanimous reject | **STRONG NO-GO** |
-| > 0 | has conditionals | **GO WITH CAVEATS (N-M)** |
-| > 0 | no conditionals | **GO (N-M)** |
-| 0 | — | **HOLD -- TIE** |
-| < 0 | — | **HOLD (N-M)** |
-
-The `(N-M)` suffix reflects the effective majority-minority split: approves
-and conditionals count together on the "go" side, rejects on the "no" side.
-A unanimous caveats result renders as `GO WITH CAVEATS (3-0)` and a
-caveats-with-dissent as `GO WITH CAVEATS (2-1)`.
-
-### Step 5: Present the results
-
-> ## ⚠ MANDATORY FINAL OUTPUT CONTRACT
->
-> **Every MAGI invocation, regardless of execution mode, MUST end with the
-> canonical output below — byte-for-byte structurally identical.**
->
-> - **Parallel mode** (Python orchestrator): copy the stdout of `run_magi.py`
->   verbatim into your reply. Do **not** paraphrase, summarize, reorder, or
->   strip sections. Do **not** prepend a "here are the results" preamble that
->   displaces the banner. Do **not** append additional analysis after
->   `## Recommended Actions` unless the user explicitly asks a follow-up
->   question.
-> - **Native sub-agent mode**: after running `synthesize.py`, the JSON report
->   alone is **not** an acceptable final answer. You MUST render the canonical
->   banner + sections from the JSON and emit them to the user with the same
->   alignment, section order, and widths produced by
->   `reporting.format_report()`.
-> - **Fallback mode** (no sub-agents, single-model simulation): after the three
->   per-agent JSON blocks and the `## Synthesis` heading, you MUST emit the
->   canonical banner + sections exactly as specified below. The three agent
->   JSON blocks are intermediate scaffolding; the banner + sections are the
->   final deliverable.
->
-> **Verification before responding:** re-read your draft reply against the
-> template below. If any of the following is missing or misaligned, fix it
-> before sending:
->
-> 1. Banner border lines match `+` + 50 `=` + `+`.
-> 2. Agent verdict rows are column-aligned (all verdicts start at the same
->    column).
-> 3. Consensus row uses the `(N-M)` suffix when applicable.
-> 4. `## Key Findings` rows have the marker/severity/title column layout.
-> 5. Section order is: banner → Key Findings → Dissenting Opinion → Conditions
->    for Approval → Recommended Actions. Optional sections are omitted when
->    empty; never reordered.
-> 6. There is **no** `## Consensus Summary` section.
+**The canonical report comes first, always.** Copy the report from `run_magi.py`'s
+stdout verbatim, from the `MAGI SYSTEM -- VERDICT` banner to the end of
+`## Recommended Actions`. Do not paraphrase, reorder, summarize or strip sections, and
+put no preamble ahead of the banner.
 
 #### Canonical output template
 
@@ -253,117 +113,30 @@ caveats-with-dissent as `GO WITH CAVEATS (2-1)`.
 - **Caspar** (Critic): Rework query layer before proceeding
 ```
 
-#### Format rules (normative)
+Sections with nothing in them are omitted; the order never changes; there is no
+`## Consensus Summary` section.
 
-**Banner:**
-- Total width: 52 columns. Border lines: `+` + 50 `=` + `+`.
-- Title centered: `|` + `"MAGI SYSTEM -- VERDICT".center(50)` + `|`.
-- Agent rows: `|  <label> <VERDICT> (<conf>%)` padded with spaces to 50 inner chars, then `|`.
-- Agent labels pad to the longest label so all verdict words start at the same column.
-  With the three standard agents, the longest label is `Balthasar (Pragmatist):` (23 chars),
-  so padding produces the column alignment shown above.
-- `<conf>` is an integer percentage (e.g., `85%`, never `0.85`).
-- `<VERDICT>` is uppercase: `APPROVE`, `CONDITIONAL`, or `REJECT`.
-- Consensus row: `|  CONSENSUS: <label>` ljust 50, then `|`.
+**Code modes (`code-review`, `design`, `analysis`):** the report is the whole answer.
+Add nothing after `## Recommended Actions` unless the user asks a follow-up.
 
-**Key Findings** (section omitted if there are no findings):
-- Header: `## Key Findings`
-- One line per deduplicated finding. No blank lines between findings. No indented detail line.
-- Fixed-width columns:
-  - Marker field, width 5, left-justified: `[!!!]`, `[!!] `, `[i]  ` (space-padded).
-  - One space separator.
-  - Severity label field, width 14, left-justified: `**[CRITICAL]**`, `**[WARNING]** `, `**[INFO]**    `.
-  - One space separator.
-  - Title starts at column 22.
-  - Suffix: ` _(from <agent1>, <agent2>)_` listing every reporting agent.
-- Findings are sorted by severity (critical → warning → info).
+**General mode:** the script's output continues with `## Council Answers`, each mage's
+own full reply. Do not copy that section into your reply. Instead, after
+`## Recommended Actions`, act as the council's rapporteur and write:
 
-**Dissenting Opinion** (section omitted if no dissent):
-- Header: `## Dissenting Opinion`
-- One line per dissenting agent: `**Name (Title)**: <summary>`
-- Summary only — do **not** include the full `reasoning` field.
-- **Why summary-only**: the Dissenting Opinion section is for at-a-glance
-  awareness of the minority position, not the full argument. The complete
-  `reasoning` text is preserved in the JSON report on disk and in each agent's
-  raw output file under the run's temp directory, so nothing is lost — only
-  the console view is truncated. This is intentional.
+    ## Answer
 
-**Conditions for Approval** (section omitted if no conditionals):
-- Header: `## Conditions for Approval`
-- Bullet list: `- **Name**: <condition>`  (name only, no role in parentheses).
+followed by one reply to the user, in your normal conversational voice, at the length
+the request deserves. Build it from the three council answers:
 
-**Recommended Actions** (always present):
-- Header: `## Recommended Actions`
-- Bullet list: `- **Name** (Title): <recommendation>` — one per agent, in stable order.
+- Lead with the answer or recommendation the consensus supports.
+- Merge what the mages agree on; do not narrate who said what point by point.
+- Keep the source links the mages cited, next to the claims they support. Add no source
+  that is not in their answers.
+- If a mage dissented or set a condition, say so plainly and give its reason. The
+  minority view is often the most useful part; never smooth it away.
+- If the consensus is a HOLD or a VETO, say that the council did not clear this and what
+  would have to change.
+- Where the mages contradict each other on a fact, say so instead of picking one silently.
 
-**Consensus Summary is NOT a section.** Do not emit `## Consensus Summary` — the
-banner already encodes the verdict and the key findings/dissent sections carry the
-substantive content. This is a **breaking change from MAGI 1.0.x**, which had a
-`## Consensus Summary` block between the banner and `## Key Findings`. Downstream
-consumers that parsed that header must now read `consensus.majority_summary` from
-the JSON report instead of grepping the rendered markdown.
-
-## Fallback (no sub-agents available)
-
-If neither `claude -p` nor sub-agent tools are available, simulate all three
-perspectives sequentially within a single response.
-
-**Rules for fallback mode:**
-
-1. **Order: Caspar first.** Generate the Critic's perspective first to establish
-   risks before the other agents can anchor toward approval.
-2. **Independence:** Write each perspective as if it has NOT seen the others.
-   Do not reference previous agents' findings in later sections.
-3. **Intermediate output:** Present three clearly labeled sections, each
-   containing the full JSON object for that agent. These three blocks are
-   **intermediate scaffolding**, not the final answer.
-4. **Final output is non-negotiable:** After the three per-agent JSON blocks
-   and the `## Synthesis` heading, you MUST emit the canonical banner and
-   sections from Step 5 — byte-for-byte identical to the format produced by
-   `reporting.format_report()` in parallel mode. The same banner width,
-   column alignment, section order, finding-row layout, and
-   no-`## Consensus Summary` rule apply. See the MANDATORY FINAL OUTPUT
-   CONTRACT callout at the top of Step 5.
-5. **Acknowledge limitation:** Note in the report that fallback mode was used,
-   as a single model generating all three perspectives has inherent anchoring bias.
-
-Example structure:
-
-    ### Caspar (Critic)
-    {caspar JSON}
-
-    ### Melchior (Scientist)
-    {melchior JSON}
-
-    ### Balthasar (Pragmatist)
-    {balthasar JSON}
-
-    ## Synthesis
-
-    +==================================================+
-    |          MAGI SYSTEM -- VERDICT                  |
-    +==================================================+
-    |  Melchior (Scientist):   ...
-    ...
-    +==================================================+
-    |  CONSENSUS: ...                                  |
-    +==================================================+
-
-    ## Key Findings
-    ...
-    ## Dissenting Opinion
-    ...
-    ## Conditions for Approval
-    ...
-    ## Recommended Actions
-    ...
-
-The banner and five sections here are **the** user-facing answer. The three
-agent JSON blocks above are diagnostic scaffolding only.
-
-## Notes
-
-- For code review mode, agents should reference specific line numbers.
-- For design mode, agents should consider scalability and migration cost.
-- The system is deliberately adversarial — Caspar's job is to find fault.
-  This is a feature, not a flaw.
+If the user later asks what a particular mage said, quote its council answer from the
+script output or from `magi-report.json`.

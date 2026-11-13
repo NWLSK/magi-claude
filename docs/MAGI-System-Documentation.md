@@ -95,6 +95,9 @@ skills/magi/
     melchior.md               -- System prompt: Scientist lens (technical rigor)
     balthasar.md              -- System prompt: Pragmatist lens (practicality)
     caspar.md                 -- System prompt: Critic lens (adversarial, risk-focused)
+    general/                  -- General-mode prompts: Scientist, Guardian, Human (7.1.0)
+  references/
+    output-format.md          -- Report format rules; native sub-agent and fallback paths
   scripts/
     __init__.py               -- Python package marker
     run_magi.py               -- Async orchestrator (asyncio + claude -p + --model flag)
@@ -109,6 +112,11 @@ tests/
   test_parse_agent_output.py  -- transport envelopes, the delimited block, fail-closed paths
   test_prompt_guard.py        -- the installation-time guard and its dry run
   test_run_magi.py            -- args, orchestration, retry feedback, telemetry
+  test_general_mode.py        -- general mode, web tools, unanimity, the lite skill
+standalone/
+  magi-lite/SKILL.md          -- Single-file lightweight skill, not loaded by the plugin
+tools/
+  measure_lite_overhead.py    -- Token budget check for magi-lite
 docs/
   MAGI-System-Documentation.md  -- This document
 pyproject.toml                -- Python >= 3.12, dual license, dev deps, tool config
@@ -219,6 +227,20 @@ Caspar is the system's deliberate adversary. It functions as an internal red tea
 
 **Personality:** Direct, doesn't sugarcoat. Distinguishes between theoretical risks and likely risks (labels both honestly). It is the agent most likely to vote "reject" — and that is a feature, not a bug. When it genuinely cannot find serious issues, it says so with confidence.
 
+### 4.4 The General-Mode Seats (7.1.0)
+
+Sections 4.1 to 4.3 describe the seats in the three code modes. In `general` mode the same three names take the characters the original MAGI had (section 1.2), each with its own system prompt under `skills/magi/agents/general/`. The code-mode prompts are not touched by this.
+
+| Seat | Title | Philosophy | Looks for |
+|------|-------|------------|-----------|
+| **Melchior** | Scientist | "What is true, and how do we know?" | Established fact versus assumption, quality of evidence, valid reasoning, honest probabilities, the soundest method |
+| **Balthasar** | Guardian | "Who gets hurt if this is wrong?" | Realistic failure scenarios, who bears them, reversibility, safety, legality and ethics, the safer route, safeguards |
+| **Caspar** | Human | "Is this the answer this person should live with?" | The real question under the stated one, what the person values, the option nobody listed, the awkward case, whether the advice will actually be followed |
+
+Caspar is the wildcard here, as in the series: the seat most willing to say the sensible option is the wrong one. It is required to argue every departure from the obvious answer, and to agree plainly when the conventional answer is also the right one for this person.
+
+Each general-mode mage answers the request in full, in an optional eighth field, `answer`, and then votes. For a proposal or decision the vote means what it always has. For an open question or a task, `approve` means the answer stands as given, `conditional` that it holds only with the stated caveats, and `reject` that the premise is wrong or the thing asked for should not be done as asked.
+
 ---
 
 ## 5. Data Schema and Communication Protocol
@@ -228,7 +250,7 @@ Caspar is the system's deliberate adversary. It functions as an internal red tea
 All three agents receive exactly the same payload:
 
 ```
-MODE: code-review | design | analysis
+MODE: code-review | design | analysis | general
 CONTEXT:
 <full content of the problem, code, or user's question>
 ```
@@ -345,7 +367,26 @@ Agents should explicitly consider **scalability** and **migration cost**.
 
 **Trigger:** General problem analysis, debugging, trade-offs, or technical decisions.
 
-This is the default mode if the input doesn't clearly fit the other two. It is the most flexible: agents apply their perspective to the problem as stated.
+This is the default mode for a software question that doesn't clearly fit the other two. It is the most flexible: agents apply their perspective to the problem as stated.
+
+### 6.4 General (7.1.0)
+
+**Trigger:** Anything that is not about software: a question, a decision, a plan, research, advice, a piece of writing.
+
+- The mages run with the general-mode prompts (section 4.4) and the titles Scientist, Guardian and Human.
+- **Web access is on by default.** Each mage is launched with `--tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch`: those two tools and no others, so a mage can search and read pages but cannot read files or run commands. `--no-web` turns it off. The report records the setting in a top-level `web` key.
+- Each mage returns its own full `answer` with the URLs it relied on. The script prints the usual banner and sections, then `## Council Answers` with the three answers.
+- The host Claude session then acts as rapporteur: after the banner block it writes `## Answer`, one reply built from the three, keeping their sources and stating any dissent. No fourth model call is made for this.
+
+Web access is off by default in the three code modes and can be turned on there with `--web`. The default differs on purpose: a diff written by someone else can carry text aimed at the mage, and a mage that can fetch pages is one that can be steered into fetching them. Pages a mage fetches are untrusted in the same way, and the general prompts tell it to treat them as evidence, never as instructions.
+
+On the open-weight path (`--ollama`) there are no web tools and `magi-rs` knows only the three original modes, so a `general` request runs as `analysis` with the original prompts. The run says so on stderr and the report carries `requested_mode: "general"`.
+
+### 6.5 Decision Threshold (7.1.0)
+
+`--require majority` (the default) is the weighted vote of section 5.3. `--require unanimous` is for actions that cannot be undone: all three seats must be filled and each must vote a plain `approve`. Otherwise the consensus label becomes `HOLD -- VETO (N-M)`, where N counts plain approves and M everything else, `consensus_verdict` becomes `reject`, and `consensus.veto` lists the mages that withheld. A `conditional` is not a plain approve. A run with a failed seat reports `HOLD -- VETO (2 of 3 seated)`: two mages cannot speak for three. This mirrors the series, where self-destruction needed all three MAGI and a single dissent stopped it.
+
+The threshold is applied by `consensus.apply_requirement` after `determine_consensus`, on the consensus that is printed and saved; under `majority` it returns the same object, so default results are unchanged.
 
 ---
 
