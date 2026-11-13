@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # Author: Julian Bolivar
-# Version: 7.0.1
-# Date: 2026-10-14
+# Version: 7.1.0
+# Date: 2026-11-13
 """MAGI Orchestrator — async Python replacement for run_magi.sh.
 
 Launches Melchior, Balthasar, and Caspar in parallel using asyncio,
 collects their JSON outputs, validates them, and runs synthesis.
 
 Usage:
-    python run_magi.py <mode> <input> [--model opus] [--timeout 900] [--output-dir <dir>]
+    python run_magi.py <mode> <input> [--model opus] [--web|--no-web] [--require unanimous]
+        [--timeout 900] [--output-dir <dir>]
 
 Exit codes:
     0 - Success: synthesis completed and report saved.
@@ -54,7 +55,13 @@ from synthesize import (  # noqa: E402
     determine_consensus,
     format_report,
 )
-from trio_executor import ClaudeTrio, TrioExecutor  # noqa: E402
+from consensus import (  # noqa: E402
+    REQUIRE_MAJORITY,
+    VALID_REQUIREMENTS,
+    apply_requirement,
+)
+from reporting import GENERAL_MODE  # noqa: E402
+from trio_executor import WEB_TOOLS, ClaudeTrio, TrioExecutor  # noqa: E402
 from bundle_segmenter import (  # noqa: E402
     CONSULT_INPUT_CEILING_BYTES,
     BundleSegmenter,
@@ -137,7 +144,15 @@ AGENTS = ("caspar", "melchior", "balthasar")
 MAX_HISTORY_RUNS = 5
 #: Per-agent timeout on the Claude path when ``--timeout`` is not passed.
 DEFAULT_TIMEOUT_SECONDS = 900.0
-VALID_MODES = ("code-review", "design", "analysis")
+VALID_MODES = ("code-review", "design", "analysis", GENERAL_MODE)
+#: Modes whose mages get web search and page reading unless ``--no-web`` is passed.
+#: Deliberately not the code modes: a diff written by someone else can carry text
+#: that tries to steer a mage, and a mage with web access is one that can be
+#: steered into fetching things. There it stays opt-in (``--web``).
+WEB_DEFAULT_MODES = frozenset({GENERAL_MODE})
+#: The mode ``general`` is sent as on the open-weight path, whose executor only
+#: knows the three original modes.
+OLLAMA_GENERAL_FALLBACK_MODE = "analysis"
 
 
 #: Attempts per model, by default: the original + 1 retry with corrective feedback.
@@ -364,6 +379,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--web",
+        dest="web",
+        action="store_true",
+        default=None,
+        help=(
+            "Let the three mages search the web and read pages (WebSearch and WebFetch, "
+            "and no other tool). Default: on in general mode, off in the other modes. "
+            "Claude path only."
+        ),
+    )
+    parser.add_argument(
+        "--no-web",
+        dest="web",
+        action="store_false",
+        help="Run the mages with no web access, whatever the mode.",
+    )
+    parser.add_argument(
+        "--require",
+        choices=VALID_REQUIREMENTS,
+        default=REQUIRE_MAJORITY,
+        help=(
+            "Decision threshold. 'majority' (default) is the usual weighted vote. "
+            "'unanimous' is for actions that cannot be undone: all three mages must "
+            "be seated and vote a plain approve, otherwise the result is HOLD -- VETO."
+        ),
+    )
+    parser.add_argument(
         "--ollama-init",
         action="store_true",
         help="Initialise this project for magi-rs (`magi-rs init -w <cwd>`, creates .magi/) and exit.",
@@ -406,6 +448,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if args.max_attempts is None:
         args.max_attempts = DEFAULT_MAX_ATTEMPTS
+    # Web access. ``None`` means the flag was not passed, so the mode decides.
+    # The open-weight path has no web tools: an explicit --web there is said out
+    # loud rather than dropped in silence, and the value is forced off so the
+    # report never claims a capability the run did not have.
+    if args.ollama:
+        if args.web:
+            print(
+                "[!] WARNING: --web has no effect with --ollama: the open-weight mages "
+                "have no web tools",
+                file=sys.stderr,
+            )
+        args.web = False
+    elif args.web is None:
+        args.web = args.mode in WEB_DEFAULT_MODES
     # INVARIANT: --model must stay None when --ollama is set. Do NOT collapse
     # this into `args.model or MODE_DEFAULT_MODELS[...]` — that would silently
     # re-enable `--ollama --model` and feed Ollama a Claude-shaped model name.
@@ -1266,20 +1322,30 @@ def _format_segmentation_table(segmentation: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
-def _default_agents_dir() -> str:
-    """The shipped ``agents/`` directory, next to this script's package.
+def _default_agents_dir(mode: str | None = None) -> str:
+    """The shipped prompt directory for *mode*, next to this script's package.
 
     ONE definition, used by both the run and the ``--check-prompts`` dry run: two copies of
     this path is how the dry run ends up validating a directory the run never reads.
 
+    Args:
+        mode: Analysis mode. ``general`` has its own three prompts, in
+            ``agents/general``; every other mode (and ``None``) reads ``agents``.
+
     Returns:
-        Absolute path to ``skills/magi/agents``.
+        Absolute path to ``skills/magi/agents`` or ``skills/magi/agents/general``.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(os.path.dirname(script_dir), "agents")
+    agents = os.path.join(os.path.dirname(script_dir), "agents")
+    return os.path.join(agents, GENERAL_MODE) if mode == GENERAL_MODE else agents
 
 
-def check_prompts(agents_dir: str) -> None:
+def _all_agents_dirs() -> list[str]:
+    """Every shipped prompt directory, for the dry run that validates them all."""
+    return [_default_agents_dir(), _default_agents_dir(GENERAL_MODE)]
+
+
+def check_prompts(agents_dir: str | list[str]) -> None:
     """Validate a directory of agent prompts and exit. The dry run of the startup guard.
 
     The guard is strict on purpose: a prompt carrying a complete verdict BETWEEN the markers
@@ -1292,18 +1358,22 @@ def check_prompts(agents_dir: str) -> None:
     a second implementation that could drift from it.
 
     Args:
-        agents_dir: The directory of ``{mage}.md`` prompts to validate.
+        agents_dir: The directory of ``{mage}.md`` prompts to validate, or several of
+            them (the shipped set is two: the code prompts and the general ones).
 
     Raises:
         SystemExit: Always. ``0`` if every prompt honours the contract, ``1`` otherwise (with
             the offending file and the reason on stderr).
     """
+    directories = [agents_dir] if isinstance(agents_dir, str) else list(agents_dir)
     try:
-        AgentPromptGuard(Path(agents_dir), VerdictSentinel()).check()
+        for directory in directories:
+            AgentPromptGuard(Path(directory), VerdictSentinel()).check()
     except PromptContractError as exc:
         print(f"[FATAL] {exc}", file=sys.stderr)
         sys.exit(1)
-    print(f"OK: the prompts in {agents_dir} honour the verdict-marker contract.")
+    for directory in directories:
+        print(f"OK: the prompts in {directory} honour the verdict-marker contract.")
     sys.exit(0)
 
 
@@ -1616,6 +1686,7 @@ async def run_orchestrator(
     executor: TrioExecutor | None = None,
     show_status: bool = True,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    tools: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run all three agents concurrently and synthesize results.
 
@@ -1643,6 +1714,8 @@ async def run_orchestrator(
         show_status: Render a live status tree while agents run. When the
             stream is not a TTY, plain one-line-per-event output is emitted
             instead.
+        tools: Built-in tools granted to each mage on the Claude path (e.g.
+            ``WEB_TOOLS``). Empty by default; ignored when *executor* is given.
 
     Returns:
         Report dict with 'agents', 'consensus', and optionally
@@ -1725,6 +1798,7 @@ async def run_orchestrator(
             on_extraction_failure=lambda name, err: _record_extraction_failure(
                 extraction_failures, name, err
             ),
+            tools=tools,
         )
     )
 
@@ -2115,7 +2189,20 @@ def main() -> None:
     # and bypasses argparse's abbreviation handling, so ``--check`` would be accepted, expanded,
     # and then quietly ignored (MAGI gate, Balthasar).
     if args.check_prompts:
-        check_prompts(_default_agents_dir())
+        check_prompts(_all_agents_dirs())
+
+    # The open-weight executor knows three modes and ``general`` is not one of
+    # them. Rather than refuse, the request runs as ``analysis`` with the
+    # original prompts -- said on stderr, and recorded in the report, so nobody
+    # reads the result as a general-mode run.
+    requested_mode = args.mode
+    if args.ollama and args.mode == GENERAL_MODE:
+        print(
+            f"[!] WARNING: general mode is not available with --ollama; running as "
+            f"'{OLLAMA_GENERAL_FALLBACK_MODE}' with the original three prompts and no web access",
+            file=sys.stderr,
+        )
+        args.mode = OLLAMA_GENERAL_FALLBACK_MODE
 
     # v6: the open-weight executor is chosen and verified HERE, before any input is
     # read -- see _select_executor. ``executor`` stays None on the Claude path.
@@ -2187,7 +2274,7 @@ def main() -> None:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    agents_dir = _default_agents_dir()
+    agents_dir = _default_agents_dir(args.mode)
 
     # Hard prerequisite check: only required for the Claude path. When --ollama
     # is set the claude CLI is not used, so skip the gate entirely to allow the
@@ -2255,6 +2342,10 @@ def main() -> None:
         print("|  Model: magi-rs (.magi/magi.toml)")
     else:
         print(f"|  Model: {args.model} ({MODEL_IDS[args.model]})")
+    if args.web:
+        print("|  Web: search and page reading enabled")
+    if args.require != REQUIRE_MAJORITY:
+        print(f"|  Threshold: {args.require}")
     print(f"|  Timeout: {resolved_timeout}s")
     print(f"|  Output: {output_dir}")
     print("+==================================================+")
@@ -2324,6 +2415,7 @@ def main() -> None:
                 executor=executor,
                 show_status=args.show_status,
                 max_attempts=args.max_attempts,
+                tools=WEB_TOOLS if args.web else (),
             )
         )
     except BaseException as exc:
@@ -2389,7 +2481,23 @@ def main() -> None:
     if len(report["agents"]) >= 2:
         report["consensus"] = determine_consensus(report["agents"])
 
-    report_text = format_report(report["agents"], report["consensus"])
+    # The caller's threshold is applied LAST, on the consensus that will be
+    # printed and saved. ``majority`` returns the same object, so the default
+    # path is untouched.
+    report["consensus"] = apply_requirement(report["consensus"], report["agents"], args.require)
+    report["mode"] = args.mode
+    # Whether the mages could reach the web. A top-level key of its own: the
+    # ``model`` block has one pinned shape on both backends.
+    report["web"] = bool(args.web)
+    if requested_mode != args.mode:
+        report["requested_mode"] = requested_mode
+
+    # Only general mode renders differently; every other mode makes the same
+    # two-argument call it always has.
+    if args.mode == GENERAL_MODE:
+        report_text = format_report(report["agents"], report["consensus"], mode=args.mode)
+    else:
+        report_text = format_report(report["agents"], report["consensus"])
     # -o/--out REDIRECTS the report to a file and SUPPRESSES it on stdout. A write
     # failure is not allowed to lose the verdict: it warns LOUDLY on stderr and falls
     # back to printing the report on stdout.

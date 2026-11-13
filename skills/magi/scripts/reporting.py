@@ -22,6 +22,17 @@ AGENT_TITLES: dict[str, tuple[str, str]] = {
     "caspar": ("Caspar", "Critic"),
 }
 
+#: Mode whose seats take the characters of the original MAGI rather than the
+#: code-review ones: the scientist, the guardian (protection, risk, ethics) and
+#: the human (values, intuition, the unconventional angle).
+GENERAL_MODE: str = "general"
+
+GENERAL_AGENT_TITLES: dict[str, tuple[str, str]] = {
+    "melchior": ("Melchior", "Scientist"),
+    "balthasar": ("Balthasar", "Guardian"),
+    "caspar": ("Caspar", "Human"),
+}
+
 # Banner layout constants.
 _BANNER_WIDTH: int = 52
 _BANNER_INNER: int = _BANNER_WIDTH - 2  # 50 characters between the borders
@@ -39,21 +50,24 @@ _SEVERITY_MARKERS: dict[str, str] = {
 }
 
 
-def _agent_title(agent_name: str) -> tuple[str, str]:
+def _agent_title(agent_name: str, mode: str | None = None) -> tuple[str, str]:
     """Look up agent display name and role, with fallback for unknown agents.
 
     Args:
         agent_name: Agent identifier (e.g., 'melchior').
+        mode: Analysis mode. ``"general"`` selects the general-mode characters;
+            anything else (including ``None``) keeps the code-review ones.
 
     Returns:
         Tuple of (display name, role title).
     """
-    return AGENT_TITLES.get(agent_name, (agent_name.capitalize(), "Agent"))
+    titles = GENERAL_AGENT_TITLES if mode == GENERAL_MODE else AGENT_TITLES
+    return titles.get(agent_name, (agent_name.capitalize(), "Agent"))
 
 
-def _agent_label(agent_name: str) -> str:
+def _agent_label(agent_name: str, mode: str | None = None) -> str:
     """Return the ``Name (Title):`` label used in the banner."""
-    name, title = _agent_title(agent_name)
+    name, title = _agent_title(agent_name, mode)
     return f"{name} ({title}):"
 
 
@@ -146,7 +160,8 @@ def format_banner(report: dict[str, Any]) -> str:
     """
     agents = report["agents"]
     consensus = report["consensus"]
-    labels = [_agent_label(a["agent"]) for a in agents]
+    mode = report.get("mode")
+    labels = [_agent_label(a["agent"], mode) for a in agents]
     max_label_len = max((len(label) for label in labels), default=0)
 
     lines: list[str] = []
@@ -226,6 +241,7 @@ def format_report(
     *,
     context_guard: str | None = None,
     lineage_warnings: list[str] | None = None,
+    mode: str | None = None,
 ) -> str:
     """Generate the full human-readable report.
 
@@ -240,6 +256,11 @@ def format_report(
     Sections 2, 3, and 4 are omitted when empty. Section 5 is always
     present.
 
+    In ``general`` mode the seats carry their general-mode titles and a sixth
+    section, ``## Council Answers``, follows with each mage's own ``answer``
+    (omitted when no mage supplied one). Every other mode renders exactly as
+    it always has.
+
     Args:
         agents: List of validated agent output dictionaries.
         consensus: Consensus dictionary produced by ``determine_consensus``.
@@ -248,6 +269,7 @@ def format_report(
             ``None`` (the Claude path / pre-v5 callers) renders the classic box.
         lineage_warnings: Declared-lineage warnings (R21), forwarded to the banner
             (decision #102: a guard that warns where nobody looks is decorative).
+        mode: Analysis mode. Only ``"general"`` changes the rendering.
 
     Returns:
         Multi-line markdown string.
@@ -257,6 +279,8 @@ def format_report(
         banner_report["context_guard"] = context_guard
     if lineage_warnings:
         banner_report["lineage_warnings"] = lineage_warnings
+    if mode is not None:
+        banner_report["mode"] = mode
     sections: list[str] = [format_banner(banner_report), ""]
 
     if consensus["findings"]:
@@ -268,20 +292,31 @@ def format_report(
     if consensus["dissent"]:
         sections.append("## Dissenting Opinion")
         for dissent in consensus["dissent"]:
-            name, title = _agent_title(dissent["agent"])
+            name, title = _agent_title(dissent["agent"], mode)
             sections.append(f"**{name} ({title})**: {dissent['summary']}")
         sections.append("")
 
     if consensus["conditions"]:
         sections.append("## Conditions for Approval")
         for cond in consensus["conditions"]:
-            name, _ = _agent_title(cond["agent"])
+            name, _ = _agent_title(cond["agent"], mode)
             sections.append(f"- **{name}**: {cond['condition']}")
         sections.append("")
 
     sections.append("## Recommended Actions")
     for agent_name, rec in consensus["recommendations"].items():
-        name, title = _agent_title(agent_name)
+        name, title = _agent_title(agent_name, mode)
         sections.append(f"- **{name}** ({title}): {rec}")
+
+    if mode == GENERAL_MODE:
+        answered = [a for a in agents if a.get("answer")]
+        if answered:
+            sections.append("")
+            sections.append("## Council Answers")
+            for agent in answered:
+                name, title = _agent_title(agent["agent"], mode)
+                sections.append("")
+                sections.append(f"### {name} ({title})")
+                sections.append(agent["answer"].strip())
 
     return "\n".join(sections)

@@ -34,7 +34,10 @@ from validate import (  # noqa: E402
     load_agent_output,
 )
 from consensus import (  # noqa: E402
+    REQUIRE_MAJORITY,
+    VALID_REQUIREMENTS,
     VERDICT_WEIGHT,
+    apply_requirement,
     determine_consensus,
 )
 from reporting import (  # noqa: E402
@@ -71,6 +74,17 @@ def main() -> None:
         default="both",
         help="Output format (default: both)",
     )
+    parser.add_argument(
+        "--mode",
+        default=None,
+        help="Analysis mode the agents ran in. Only 'general' changes the rendering.",
+    )
+    parser.add_argument(
+        "--require",
+        choices=VALID_REQUIREMENTS,
+        default=REQUIRE_MAJORITY,
+        help="Decision threshold: 'majority' (default) or 'unanimous'.",
+    )
     args = parser.parse_args()
 
     if len(args.agent_files) < 2 or len(args.agent_files) > 3:
@@ -87,16 +101,18 @@ def main() -> None:
         print("ERROR: Need at least 2 valid agent outputs", file=sys.stderr)
         sys.exit(1)
 
-    consensus = determine_consensus(agents)
+    consensus = apply_requirement(determine_consensus(agents), agents, args.require)
 
     if args.format in ("text", "both"):
-        print(format_report(agents, consensus))
+        print(format_report(agents, consensus, mode=args.mode))
 
     if args.format in ("json", "both"):
-        report = {
+        report: dict[str, object] = {
             "agents": agents,
             "consensus": consensus,
         }
+        if args.mode is not None:
+            report["mode"] = args.mode
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
                 json.dump(report, f, indent=2)

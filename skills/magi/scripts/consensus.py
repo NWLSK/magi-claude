@@ -302,3 +302,57 @@ def determine_consensus(agents: list[dict[str, Any]]) -> dict[str, Any]:
         "conditions": conditions,
         "recommendations": {a["agent"]: a["recommendation"] for a in agents},
     }
+
+
+#: Decision thresholds a caller can demand of the council.
+REQUIRE_MAJORITY: str = "majority"
+REQUIRE_UNANIMOUS: str = "unanimous"
+VALID_REQUIREMENTS: tuple[str, ...] = (REQUIRE_MAJORITY, REQUIRE_UNANIMOUS)
+
+#: Seats on a full council; unanimity only means something when all are filled.
+_FULL_COUNCIL: int = 3
+
+
+def apply_requirement(
+    consensus: dict[str, Any], agents: list[dict[str, Any]], require: str
+) -> dict[str, Any]:
+    """Hold a consensus that falls short of the threshold the caller demanded.
+
+    ``majority`` is the default rule and returns *consensus* untouched. Under
+    ``unanimous`` -- for actions that cannot be undone -- every seat must be
+    filled and every mage must vote a plain ``approve``. A single ``reject`` or
+    ``conditional`` vetoes, and so does a missing seat: two mages cannot speak
+    for three.
+
+    Args:
+        consensus: The dict produced by :func:`determine_consensus`.
+        agents: The agents that consensus was computed from.
+        require: ``"majority"`` or ``"unanimous"``.
+
+    Returns:
+        *consensus* itself under ``majority``. Under ``unanimous``, a copy with
+        ``requirement`` recorded; when unanimity fails its label becomes
+        ``HOLD -- VETO (N-M)``, its verdict ``reject``, and ``veto`` lists the
+        mages that withheld a plain approve (empty when the only shortfall is
+        a missing seat).
+
+    Raises:
+        ValueError: *require* is not a known threshold.
+    """
+    if require not in VALID_REQUIREMENTS:
+        raise ValueError(f"unknown requirement {require!r}; expected one of {VALID_REQUIREMENTS}")
+    if require == REQUIRE_MAJORITY:
+        return consensus
+    result = dict(consensus)
+    result["requirement"] = require
+    withheld = [a["agent"] for a in agents if a["verdict"] != "approve"]
+    approvals = len(agents) - len(withheld)
+    if not withheld and len(agents) >= _FULL_COUNCIL:
+        return result
+    if withheld:
+        result["consensus"] = f"HOLD -- VETO ({approvals}-{len(withheld)})"
+    else:
+        result["consensus"] = f"HOLD -- VETO ({approvals} of {_FULL_COUNCIL} seated)"
+    result["consensus_verdict"] = "reject"
+    result["veto"] = withheld
+    return result

@@ -49,6 +49,9 @@ from verdict_markers import (
 #: :meth:`ClaudeTrio._run_with_retry` cannot drift apart.
 _MAX_ATTEMPTS_ERROR = "max_attempts must be >= 1"
 
+#: The tools a web-enabled mage is given: search and page reading, nothing else.
+WEB_TOOLS: tuple[str, ...] = ("WebSearch", "WebFetch")
+
 
 def _write_text(output_dir: str, filename: str, content: str) -> None:
     """Write one per-mage artifact, warning instead of failing on I/O error.
@@ -235,10 +238,14 @@ class ClaudeTrio(TrioExecutor):
         on_extraction_failure: (
             Callable[[str, ValidationError | json.JSONDecodeError], None] | None
         ) = None,
+        tools: tuple[str, ...] = (),
     ) -> None:
         """Store the retry-prompt builder.
 
         Args:
+            tools: Built-in tool names each mage may use, and the ONLY ones it
+                may use (e.g. ``WEB_TOOLS``). Empty, the default, launches the
+                mages exactly as before, with no tool flags at all.
             build_retry_prompt: Builds the corrective prompt for a retry from
                 the original prompt and the failure. Injected rather than
                 imported because it lives in ``run_magi``, which imports this
@@ -254,6 +261,26 @@ class ClaudeTrio(TrioExecutor):
         """
         self._build_retry_prompt = build_retry_prompt
         self._on_extraction_failure = on_extraction_failure
+        self._tools = tuple(tools)
+
+    def _tool_flags(self) -> list[str]:
+        """The argv fragment that grants this trio's tools, or nothing.
+
+        ``--tools`` narrows the mage's toolbox to exactly these names, so a
+        web-enabled mage still cannot read files or run commands;
+        ``--allowedTools`` lets it call them without a permission prompt, which
+        nobody could answer in a headless run. Both flags are variadic in the
+        CLI, so the fragment must be followed by another option, never by the
+        ``-`` stdin positional.
+
+        Returns:
+            ``[]`` when no tools are granted, else the two flags with a
+            comma-joined list each.
+        """
+        if not self._tools:
+            return []
+        joined = ",".join(self._tools)
+        return ["--tools", joined, "--allowedTools", joined]
 
     def _retry_prompt(self, prompt: str, error: ValidationError | json.JSONDecodeError) -> str:
         """Return the ORIGINAL prompt with cause-specific feedback appended.
@@ -497,6 +524,7 @@ class ClaudeTrio(TrioExecutor):
             "-p",
             "--output-format",
             "json",
+            *self._tool_flags(),
             "--model",
             model_id,
             "--system-prompt-file",

@@ -22,7 +22,16 @@ import pytest
 from verdict_markers import ECHO_CANARY, VERDICT_CLOSE, VERDICT_OPEN, VerdictSentinel
 
 AGENTS_DIR = Path(__file__).parent.parent / "skills" / "magi" / "agents"
-PROMPTS = ["melchior.md", "balthasar.md", "caspar.md"]
+#: Both shipped sets: the code prompts and, since 7.1.0, the general-mode ones. The
+#: contract is the same for each, so every test below runs against all six files.
+PROMPTS = [
+    "melchior.md",
+    "balthasar.md",
+    "caspar.md",
+    "general/melchior.md",
+    "general/balthasar.md",
+    "general/caspar.md",
+]
 
 
 @pytest.mark.parametrize("name", PROMPTS)
@@ -69,7 +78,7 @@ class TestPromptContract:
         If ``melchior.md`` ships an example that says ``"agent": "caspar"``, the model
         imitates it and the identity check (R10) discards it **every single time**.
         """
-        agent = name.removesuffix(".md")
+        agent = Path(name).stem
         assert f'"agent": "{agent}"' in self._example_line(name)
 
     def test_the_worked_example_is_NOT_an_approve(self, name):

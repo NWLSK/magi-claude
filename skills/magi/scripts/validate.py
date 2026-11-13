@@ -233,6 +233,17 @@ def load_agent_output(filepath: str) -> dict[str, Any]:
                 filepath,
             )
 
+    # --- optional answer (general mode) ---
+    # The mage's own full reply to an open request. Optional, like ``file``/``line``
+    # on a finding, and fail-soft for the same reason: a slip on an optional field
+    # must not cost the seat. A non-string is dropped; an over-long one is cut.
+    if "answer" in data:
+        answer = data["answer"]
+        if isinstance(answer, str) and answer.strip():
+            data["answer"] = answer[:_MAX_FIELD_LENGTH]
+        else:
+            del data["answer"]
+
     # --- findings ---
     findings = data["findings"]
     if not isinstance(findings, list):

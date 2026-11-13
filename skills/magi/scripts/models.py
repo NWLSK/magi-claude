@@ -67,6 +67,7 @@ _MODE_DEFAULTS_MUTABLE: dict[str, str] = {
     "code-review": "opus",
     "design": "opus",
     "analysis": "opus",
+    "general": "opus",
 }
 MODE_DEFAULT_MODELS: Mapping[str, str] = MappingProxyType(_MODE_DEFAULTS_MUTABLE)
 
