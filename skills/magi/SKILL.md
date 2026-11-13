@@ -6,9 +6,11 @@ description: >
   angles, vote, and the dissent is kept. Works for any request: questions, decisions,
   plans, research (with web search), writing, and also code review and software design.
   Use it for requests with genuine uncertainty, real trade-offs or significant
-  consequences. Trigger phrases: "MAGI", "ask the MAGI", "three perspectives",
-  "multi-perspective analysis", "MAGI review". NOT for trivial questions or anything
-  with one obvious answer.
+  consequences. This is the full council: it launches three separate agents. Trigger
+  phrases: "MAGI", "ask the MAGI", "full MAGI", "three perspectives",
+  "multi-perspective analysis", "MAGI review". A plain "MAGI" means this skill; only
+  "MAGI lite" or "quick MAGI" belongs to the separate magi-lite skill. NOT for trivial
+  questions or anything with one obvious answer.
 ---
 
 # MAGI System

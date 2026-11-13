@@ -1,6 +1,6 @@
 {
   "name": "magi",
-  "version": "7.1.0",
+  "version": "7.1.1",
   "description": "Three-mind council inspired by Evangelion's MAGI supercomputers. Three independent agents (Melchior, Balthasar, Caspar) answer any request from different angles (questions, decisions, plans, research with web search, code review, software design), vote, and keep the dissent.",
   "author": {
     "name": "Julian Bolivar",

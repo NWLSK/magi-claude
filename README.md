@@ -271,9 +271,9 @@ plugin's scripts. Claude takes the three positions inside one reply, shows them 
 short council block (120 words at most) and then answers normally. No sub-agents, no
 scripts, no extra model calls.
 
-Its cost is fixed: about 510 tokens for the skill file plus about 180 for the council
+Its cost is fixed: about 515 tokens for the skill file plus about 180 for the council
 block. A reply therefore stays within twice the cost of a plain one whenever the plain
-exchange would be about 690 tokens or more, roughly a 450-word answer; smaller requests
+exchange would be about 695 tokens or more, roughly a 450-word answer; smaller requests
 are the ones the skill's own gate answers without the council. Check the numbers with:
 
 ```bash
@@ -289,6 +289,13 @@ make skill-zip   # writes dist/magi-lite.zip
 
 The three positions come from one model in one pass, so they are less independent than
 the plugin's three separate runs. Use the plugin when the decision matters.
+
+**Using both.** A skill uploaded in the Claude app is also available in Claude Code, so
+with the plugin installed both are loaded there. Their descriptions keep them apart: a
+plain "MAGI" or "ask the MAGI" goes to the plugin, and only "MAGI lite" or "quick MAGI"
+goes to the lite skill. Where the plugin is not installed, the lite skill answers to
+those lite phrases or to `/magi-lite`. To choose explicitly, type `/magi:magi` for the
+full council or `/magi-lite` for the single-reply one.
 
 ---
 

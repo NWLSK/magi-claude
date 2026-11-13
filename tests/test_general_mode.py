@@ -485,6 +485,25 @@ class TestLiteSkill:
         assert text.startswith("---\nname: magi-lite\ndescription:")
         assert text.count("\n---\n") == 1
 
+    @staticmethod
+    def _description(path: Path) -> str:
+        """The frontmatter of a skill file: what Claude reads to choose a skill."""
+        return path.read_text(encoding="utf-8").split("\n---\n")[0]
+
+    def test_a_plain_magi_does_not_trigger_it_when_the_plugin_is_installed(self):
+        """Both skills load in Claude Code; shared triggers made the choice a coin toss."""
+        lite = self._description(self.SKILL)
+        assert '"MAGI lite"' in lite
+        assert '"MAGI"' not in lite
+        assert '"three perspectives"' not in lite
+        assert "If the full `magi` skill is also available, use that one" in lite
+
+    def test_the_plugin_skill_claims_the_plain_phrase_and_cedes_the_lite_one(self):
+        full = self._description(REPO / "skills" / "magi" / "SKILL.md")
+        assert '"MAGI"' in full
+        assert 'A plain "MAGI" means this skill' in full
+        assert '"MAGI lite"' in full and "magi-lite skill" in full
+
     def test_it_is_a_single_file_with_no_scripts(self):
         assert [p.name for p in self.SKILL.parent.iterdir()] == ["SKILL.md"]
 

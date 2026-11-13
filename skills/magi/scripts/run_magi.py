@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Author: Julian Bolivar
-# Version: 7.1.0
+# Version: 7.1.1
 # Date: 2026-11-13
 """MAGI Orchestrator — async Python replacement for run_magi.sh.
 

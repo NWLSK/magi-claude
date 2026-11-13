@@ -9,6 +9,18 @@ Install and update through the marketplace: `/plugin marketplace add BolivarTech
 `/plugin install magi@bolivartech-plugins`, then `/plugin marketplace update` to pick up a new
 release.
 
+## [7.1.1] - 2026-11-13
+
+### Fixed
+
+- The plugin skill and the standalone `magi-lite` skill no longer compete for the same
+  phrases when both are installed, which they are in Claude Code once the lite skill has been
+  uploaded in the Claude app. Both descriptions listed "MAGI" and "three perspectives", so
+  which one ran was not predictable. A plain "MAGI" now belongs to the plugin; the lite skill
+  triggers on "MAGI lite", "quick MAGI" or "lite council", and hands over to the plugin when
+  that is available and the user did not ask for the lite one. An uploaded copy of the lite
+  skill has to be replaced by hand: run `make skill-zip` and upload the new archive.
+
 ## [7.1.0] - 2026-11-13
 
 ### Added
